@@ -9,6 +9,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+      - name: Update Docker mkarchiso image
+        run: docker pull leitosama/mkarchiso:latest
       - name: Build ISO image
         run: docker run --privileged --rm -v "$(pwd)"/afclone:/profile -v "$(pwd)"/out:/out leitosama/mkarchiso:latest
       - uses: actions/upload-artifact@v3
