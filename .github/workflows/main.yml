@@ -1,0 +1,16 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: self-hosted
+    name: Build AFClone ISO
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Build ISO image
+        run: docker run --privileged --rm -v "$(pwd)"/afclone:/profile -v "$(pwd)"/out:/out leitosama/mkarchiso:latest
+      - uses: actions/upload-artifact@v3
+        with:
+          path: ./out/*
