@@ -27,19 +27,14 @@ bash
 dialog
 less
 pv
-terminus-font
 
 # Storage detection and management
 dmidecode
 dmraid
-gdisk
 hdparm
 lsscsi
-lvm2
 mdadm
 nvme-cli
-smartmontools
-cryptsetup
 
 # eMMC support
 mmc-utils
@@ -58,8 +53,6 @@ fuse2
 # Forensic imaging
 ddrescue
 libewf
-partclone
-testdisk
 
 # Hashing
 diffutils
@@ -67,9 +60,6 @@ diffutils
 # Editors and file management
 mc
 vim
-
-# Partitioning
-parted
 
 # ── Standard-edition extras ───────────────────────────────────────────────────
 # Network file transfer

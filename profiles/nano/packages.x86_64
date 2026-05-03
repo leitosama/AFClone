@@ -26,19 +26,14 @@ bash
 dialog
 less
 pv
-terminus-font
 
 # Storage detection and management
 dmidecode
 dmraid
-gdisk
 hdparm
 lsscsi
-lvm2
 mdadm
 nvme-cli
-smartmontools
-cryptsetup
 
 # eMMC support
 mmc-utils
@@ -57,8 +52,6 @@ fuse2
 # Forensic imaging
 ddrescue
 libewf
-partclone
-testdisk
 
 # Hashing and verification (via coreutils)
 diffutils
@@ -70,6 +63,3 @@ vim
 # Network (SSH access to imager only)
 dhcpcd
 openssh
-
-# Partitioning
-parted
