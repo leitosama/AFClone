@@ -8,7 +8,7 @@ jobs:
     name: Build Nano Edition
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Build Nano ISO
         run: make nano
       - name: Smoke test Nano ISO
@@ -24,7 +24,7 @@ jobs:
     name: Build Standard Edition
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Build Standard ISO
         run: make standard
       - name: Smoke test Standard ISO
