@@ -66,11 +66,5 @@ vim
 dhcpcd
 openssh
 
-# Virtualization guest support
-hyperv
-open-vm-tools
-qemu-guest-agent
-virtualbox-guest-utils-nox
-
 # Partitioning
 parted
