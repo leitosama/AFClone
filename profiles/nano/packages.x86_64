@@ -59,7 +59,3 @@ diffutils
 # Editors and file management
 mc
 vim
-
-# Network (SSH access to imager only)
-dhcpcd
-openssh

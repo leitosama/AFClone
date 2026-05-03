@@ -7,8 +7,7 @@
 
    Forensic Disk Imager  |  Nano Edition  |  Write-Protected by default
 
- TTY1: AFClone TUI         TTY2-6: Shell
- SSH:  ssh root@<IP>       No password required
+ TTY1: AFClone TUI         TTY2-6: Shell  (no network — air-gapped)
 
  ALL storage devices are READ-ONLY until you designate an output device.
 
