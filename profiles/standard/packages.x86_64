@@ -2,8 +2,13 @@
 # Base system
 base
 linux
-linux-firmware
+linux-firmware-whence
+linux-firmware-broadcom
+linux-firmware-intel
 linux-firmware-marvell
+linux-firmware-mellanox
+linux-firmware-other
+linux-firmware-realtek
 mkinitcpio
 mkinitcpio-archiso
 
@@ -83,7 +88,7 @@ openssh
 dhcpcd
 ethtool
 
-# Wireless
+# Wireless userspace
 b43-fwcutter
 broadcom-wl
 iw
@@ -91,6 +96,10 @@ iwd
 wireless-regdb
 wireless_tools
 wpa_supplicant
+
+# Wireless firmware (Standard only — see docs/firmware-x86_64.md)
+linux-firmware-atheros
+linux-firmware-mediatek
 
 # Mobile broadband
 modemmanager

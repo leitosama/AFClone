@@ -1,8 +1,13 @@
 # Base system
 base
 linux
-linux-firmware
+linux-firmware-whence
+linux-firmware-broadcom
+linux-firmware-intel
 linux-firmware-marvell
+linux-firmware-mellanox
+linux-firmware-other
+linux-firmware-realtek
 mkinitcpio
 mkinitcpio-archiso
 
