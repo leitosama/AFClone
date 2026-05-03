@@ -4,7 +4,7 @@ on: [push]
 
 jobs:
   build-nano:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     name: Build Nano Edition
     steps:
       - name: Checkout
@@ -20,7 +20,7 @@ jobs:
           path: out/nano/*.iso
 
   build-standard:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     name: Build Standard Edition
     steps:
       - name: Checkout
