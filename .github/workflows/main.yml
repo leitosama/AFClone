@@ -14,7 +14,7 @@ jobs:
       - name: Smoke test Nano ISO
         run: make smoke-nano
       - name: Upload Nano artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: AFClone-Nano
           path: out/nano/*.iso
@@ -30,7 +30,7 @@ jobs:
       - name: Smoke test Standard ISO
         run: make smoke-standard
       - name: Upload Standard artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: AFClone-Standard
           path: out/standard/*.iso
