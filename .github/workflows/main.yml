@@ -11,6 +11,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Build Nano ISO
         run: make nano
+      - name: Install smoke test tools
+        run: sudo apt-get install -y squashfs-tools
       - name: Smoke test Nano ISO
         run: make smoke-nano
       - name: Upload Nano artifact
@@ -27,6 +29,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Build Standard ISO
         run: make standard
+      - name: Install smoke test tools
+        run: sudo apt-get install -y squashfs-tools
       - name: Smoke test Standard ISO
         run: make smoke-standard
       - name: Upload Standard artifact

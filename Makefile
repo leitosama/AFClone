@@ -76,24 +76,19 @@ standard: pull $(LOCAL_REPO)/afclone-local.db.tar.gz
 	@echo "==> Standard ISO ready: $(OUT_DIR)/standard/"
 
 # ── Smoke tests (no KVM required) ─────────────────────────────────────────────
-smoke-nano:
-	@echo "==> Smoke-testing Nano ISO..."
-	@iso=$$(ls $(OUT_DIR)/nano/AFClone-Nano-*.iso 2>/dev/null | head -1); \
-	[ -n "$$iso" ] || { echo "ERROR: No Nano ISO found in $(OUT_DIR)/nano/"; exit 1; }; \
+# Requires squashfs-tools (unsquashfs). On GHA: installed via CI workflow.
+# Locally: sudo apt-get install squashfs-tools  /  pacman -S squashfs-tools
+_smoke = \
+	iso=$$(ls $(OUT_DIR)/$(1)/AFClone-$(2)-*.iso 2>/dev/null | head -1); \
+	[ -n "$$iso" ] || { echo "ERROR: No $(2) ISO found in $(OUT_DIR)/$(1)/"; exit 1; }; \
 	tmp=$$(mktemp -d /tmp/afclone-smoke-XXXXXX); \
-	isoinfo -R -i "$$iso" -x /arch/x86_64/airootfs.sfs > "$$tmp/airootfs.sfs" 2>/dev/null; \
-	unsquashfs -d "$$tmp/fs" "$$tmp/airootfs.sfs" >/dev/null 2>&1; \
+	mnt="$$tmp/mnt"; mkdir -p "$$mnt"; \
+	sudo mount -o loop,ro "$$iso" "$$mnt"; \
+	unsquashfs -d "$$tmp/fs" "$$mnt/arch/x86_64/airootfs.sfs" >/dev/null 2>&1; \
+	sudo umount "$$mnt"; \
 	echo "Checking binaries..."; \
 	ok=0; fail=0; \
-	for bin in \
-		usr/local/bin/afclone \
-		usr/local/bin/afclone-engine \
-		usr/local/bin/afclone-writeblock \
-		usr/bin/ewfacquire \
-		usr/bin/ddrescue \
-		usr/bin/nvme \
-		usr/sbin/mdadm; \
-	do \
+	for bin in $(3); do \
 		if [ -f "$$tmp/fs/$$bin" ]; then echo "  OK: $$bin"; ok=$$((ok+1)); \
 		else echo "  MISSING: $$bin"; fail=$$((fail+1)); fi; \
 	done; \
@@ -101,31 +96,20 @@ smoke-nano:
 	echo "==> $$ok OK, $$fail missing."; \
 	[ $$fail -eq 0 ]
 
+NANO_BINS     := usr/local/bin/afclone usr/local/bin/afclone-engine \
+                 usr/local/bin/afclone-writeblock usr/bin/ewfacquire \
+                 usr/bin/ddrescue usr/bin/nvme usr/sbin/mdadm
+STANDARD_BINS := usr/local/bin/afclone usr/local/bin/afclone-engine \
+                 usr/bin/ewfacquire usr/bin/ddrescue \
+                 usr/bin/sshfs usr/bin/lftp usr/bin/rsync usr/sbin/iscsiadm
+
+smoke-nano:
+	@echo "==> Smoke-testing Nano ISO..."
+	@$(call _smoke,nano,Nano,$(NANO_BINS))
+
 smoke-standard:
 	@echo "==> Smoke-testing Standard ISO..."
-	@iso=$$(ls $(OUT_DIR)/standard/AFClone-Standard-*.iso 2>/dev/null | head -1); \
-	[ -n "$$iso" ] || { echo "ERROR: No Standard ISO found in $(OUT_DIR)/standard/"; exit 1; }; \
-	tmp=$$(mktemp -d /tmp/afclone-smoke-XXXXXX); \
-	isoinfo -R -i "$$iso" -x /arch/x86_64/airootfs.sfs > "$$tmp/airootfs.sfs" 2>/dev/null; \
-	unsquashfs -d "$$tmp/fs" "$$tmp/airootfs.sfs" >/dev/null 2>&1; \
-	echo "Checking binaries..."; \
-	ok=0; fail=0; \
-	for bin in \
-		usr/local/bin/afclone \
-		usr/local/bin/afclone-engine \
-		usr/bin/ewfacquire \
-		usr/bin/ddrescue \
-		usr/bin/sshfs \
-		usr/bin/lftp \
-		usr/bin/rsync \
-		usr/sbin/iscsiadm; \
-	do \
-		if [ -f "$$tmp/fs/$$bin" ]; then echo "  OK: $$bin"; ok=$$((ok+1)); \
-		else echo "  MISSING: $$bin"; fail=$$((fail+1)); fi; \
-	done; \
-	rm -rf "$$tmp"; \
-	echo "==> $$ok OK, $$fail missing."; \
-	[ $$fail -eq 0 ]
+	@$(call _smoke,standard,Standard,$(STANDARD_BINS))
 
 # ── Housekeeping ──────────────────────────────────────────────────────────────
 clean:
