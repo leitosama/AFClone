@@ -1,0 +1,404 @@
+#!/usr/bin/env bash
+# AFClone TUI — forensic disk imaging interface
+# Edition is controlled by AFCLONE_EDITION env var (nano | standard)
+
+EDITION="${AFCLONE_EDITION:-nano}"
+BT="AFClone Forensic Imager"
+W=72  # dialog width
+H=22  # dialog height
+SESSION_DIR="/root/afclone-sessions"
+_TMPF=""
+
+mkdir -p "$SESSION_DIR"
+
+# ── Dialog helpers ─────────────────────────────────────────────────────────────
+
+# Run dialog, put result in $REPLY, return dialog's exit code.
+_d() {
+    _TMPF=$(mktemp /tmp/afclone-d-XXXXXX)
+    dialog --backtitle "$BT" "$@" 2>"$_TMPF"
+    local ret=$?
+    REPLY=$(cat "$_TMPF")
+    rm -f "$_TMPF"
+    return $ret
+}
+
+_msg() {
+    dialog --backtitle "$BT" --msgbox "$1" 10 $W
+}
+
+_yesno() {
+    dialog --backtitle "$BT" --yesno "$1" 8 $W
+}
+
+_info() {
+    dialog --backtitle "$BT" --infobox "$1" 5 $W
+    sleep "${2:-1}"
+}
+
+_input() {
+    local prompt="$1" default="${2:-}"
+    _d --inputbox "$prompt" 8 $W "$default"
+}
+
+_gauge() {
+    dialog --backtitle "$BT" --gauge "$1" 8 $W 0
+}
+
+# ── Write-block helpers ────────────────────────────────────────────────────────
+
+_unlock_dev() {
+    local dev="$1"
+    blockdev --setrw "$dev" 2>/dev/null || true
+    hdparm -r 0 "$dev" 2>/dev/null || true
+}
+
+_lock_dev() {
+    local dev="$1"
+    blockdev --setro "$dev" 2>/dev/null || true
+    hdparm -r 1 "$dev" 2>/dev/null || true
+}
+
+# ── Device list builder ────────────────────────────────────────────────────────
+
+_build_device_menu() {
+    mapfile -t _devlines < <(afclone-engine list-devices 2>/dev/null)
+    _MENU_ITEMS=()
+    local i=0
+    while [[ $i -lt ${#_devlines[@]} ]]; do
+        _MENU_ITEMS+=("${_devlines[$i]}" "${_devlines[$((i+1))]:-}")
+        (( i += 2 ))
+    done
+}
+
+# ── Case metadata ──────────────────────────────────────────────────────────────
+
+_collect_metadata() {
+    _input "Examiner name:" "" || return 1
+    local examiner="$REPLY"
+
+    _input "Case number:" "" || return 1
+    local casenr="$REPLY"
+
+    _input "Evidence number:" "" || return 1
+    local evidence="$REPLY"
+
+    _input "Description / notes:" "" || return 1
+    local notes="$REPLY"
+
+    _META=("$examiner" "$casenr" "$evidence" "$notes")
+}
+
+# ── Destination selection ──────────────────────────────────────────────────────
+
+_select_local_dest() {
+    # Find writable mount points (after we unlock the output device)
+    _d --title "Output directory" --dselect "$SESSION_DIR/" $H $W || return 1
+    local outdir="${REPLY%/}"
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    _DEST_DIR="$outdir"
+    _DEST_BASE="${outdir}/${_META[1]:-CASE}_${ts}"
+}
+
+_select_dest_device() {
+    _build_device_menu
+    if [[ ${#_MENU_ITEMS[@]} -eq 0 ]]; then
+        _msg "No block devices found for output."
+        return 1
+    fi
+    _d --title "Select OUTPUT device (will be made writable)" \
+        --menu "Choose the device where the image will be stored:" \
+        $H $W 10 "${_MENU_ITEMS[@]}" || return 1
+    _OUTPUT_DEV="$REPLY"
+    _info "Unlocking $REPLY for writing..."
+    _unlock_dev "$_OUTPUT_DEV"
+
+    # Mount the output device if not already mounted
+    local mount_point
+    mount_point=$(findmnt -n -o TARGET "$_OUTPUT_DEV" 2>/dev/null || true)
+    if [[ -z "$mount_point" ]]; then
+        mount_point="/mnt/afclone-out-$$"
+        mkdir -p "$mount_point"
+        if ! mount "$_OUTPUT_DEV" "$mount_point" 2>/dev/null; then
+            _msg "Could not mount ${_OUTPUT_DEV}. Mount it manually and use 'Local path' option."
+            _lock_dev "$_OUTPUT_DEV"
+            return 1
+        fi
+        _MOUNTED_BY_US="$mount_point"
+    fi
+    _DEST_DIR="$mount_point"
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    _DEST_BASE="${mount_point}/${_META[1]:-CASE}_${ts}"
+}
+
+_select_network_dest() {
+    local opts=()
+    opts+=("sftp"   "SFTP / SCP — requires host+path")
+    opts+=("nfs"    "NFS mount — requires host:export")
+    opts+=("iscsi"  "iSCSI — requires portal and IQN")
+    opts+=("s3"     "S3 bucket — requires s3fs mount point")
+    opts+=("nbd"    "NBD — Network Block Device")
+
+    _d --title "Network destination" --menu "Select network protocol:" \
+        $H $W 6 "${opts[@]}" || return 1
+    local proto="$REPLY"
+
+    case "$proto" in
+        sftp)
+            _input "SFTP host (user@host:/remote/path):" "" || return 1
+            local remote="$REPLY"
+            local mount_point="/mnt/afclone-sftp-$$"
+            mkdir -p "$mount_point"
+            _info "Mounting SFTP..." 2
+            if ! sshfs "$remote" "$mount_point" -o reconnect,ServerAliveInterval=15; then
+                _msg "SFTP mount failed. Check host/credentials."
+                rmdir "$mount_point" 2>/dev/null; return 1
+            fi
+            _MOUNTED_BY_US="$mount_point"
+            ;;
+        nfs)
+            _input "NFS export (host:/export/path):" "" || return 1
+            local export="$REPLY"
+            local mount_point="/mnt/afclone-nfs-$$"
+            mkdir -p "$mount_point"
+            _info "Mounting NFS..." 2
+            if ! mount -t nfs "$export" "$mount_point"; then
+                _msg "NFS mount failed."
+                rmdir "$mount_point" 2>/dev/null; return 1
+            fi
+            _MOUNTED_BY_US="$mount_point"
+            ;;
+        iscsi)
+            _input "iSCSI portal (IP:port):" "" || return 1
+            local portal="$REPLY"
+            _input "Target IQN:" "" || return 1
+            local iqn="$REPLY"
+            _info "Connecting iSCSI..." 2
+            iscsiadm -m discovery -t sendtargets -p "$portal" >/dev/null 2>&1
+            iscsiadm -m node --targetname "$iqn" -p "$portal" --login >/dev/null 2>&1 || {
+                _msg "iSCSI login failed."
+                return 1
+            }
+            _msg "iSCSI connected. Select the new block device in the next screen."
+            _select_dest_device || return 1
+            return 0
+            ;;
+        s3)
+            _input "S3 bucket name:" "" || return 1
+            local bucket="$REPLY"
+            local mount_point="/mnt/afclone-s3-$$"
+            mkdir -p "$mount_point"
+            _info "Mounting S3 bucket..." 2
+            if ! s3fs "$bucket" "$mount_point" -o use_cache=/tmp; then
+                _msg "S3 mount failed. Check credentials (use aws configure or IAM role)."
+                rmdir "$mount_point" 2>/dev/null; return 1
+            fi
+            _MOUNTED_BY_US="$mount_point"
+            ;;
+        nbd)
+            _input "NBD server (host:port):" "" || return 1
+            local srv="$REPLY"
+            local host="${srv%:*}" port="${srv##*:}"
+            local dev="/dev/nbd0"
+            _info "Connecting NBD..." 2
+            modprobe nbd 2>/dev/null || true
+            nbd-client "$host" "$port" "$dev" >/dev/null 2>&1 || {
+                _msg "NBD connect failed."
+                return 1
+            }
+            _unlock_dev "$dev"
+            _output_DEV="$dev"
+            mount_point="/mnt/afclone-nbd-$$"
+            mkdir -p "$mount_point"
+            mount "$dev" "$mount_point" 2>/dev/null || {
+                _msg "NBD device connected but mount failed. Use 'Local path' pointed at a mounted location."
+                return 1
+            }
+            _MOUNTED_BY_US="$mount_point"
+            ;;
+    esac
+
+    _DEST_DIR="$mount_point"
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    _DEST_BASE="${mount_point}/${_META[1]:-CASE}_${ts}"
+}
+
+# ── New imaging session ────────────────────────────────────────────────────────
+
+new_session() {
+    local _META=() _OUTPUT_DEV="" _MOUNTED_BY_US="" _DEST_DIR="" _DEST_BASE=""
+
+    # 1. Metadata
+    _d --title "Case Metadata" --form "Enter case information:" $H $W 4 \
+        "Examiner:"        1 1 "" 1 20 40 0 \
+        "Case number:"     2 1 "" 2 20 40 0 \
+        "Evidence number:" 3 1 "" 3 20 40 0 \
+        "Notes:"           4 1 "" 4 20 60 0 || return
+
+    # Parse the form output (fields separated by newlines)
+    local examiner casenr evidence notes
+    IFS=$'\n' read -r examiner casenr evidence notes <<< "$REPLY"
+
+    # 2. Source device
+    _build_device_menu
+    if [[ ${#_MENU_ITEMS[@]} -eq 0 ]]; then
+        _msg "No source devices detected. Check storage connections."
+        return
+    fi
+    _d --title "Select SOURCE device (read-only)" \
+        --menu "All devices are write-protected. Select the source to image:" \
+        $H $W 12 "${_MENU_ITEMS[@]}" || return
+    local source_dev="$REPLY"
+
+    # 3. Destination type
+    local dest_opts=()
+    dest_opts+=("device" "Local device (USB drive, external disk)")
+    dest_opts+=("path"   "Local path (already mounted directory)")
+    if [[ "$EDITION" == "standard" ]]; then
+        dest_opts+=("sftp"   "Network: SFTP/SCP")
+        dest_opts+=("nfs"    "Network: NFS")
+        dest_opts+=("iscsi"  "Network: iSCSI")
+        dest_opts+=("s3"     "Network: S3 bucket")
+        dest_opts+=("nbd"    "Network: NBD")
+    fi
+    _d --title "Destination" --menu "Where should the image be saved?" \
+        $H $W 8 "${dest_opts[@]}" || return
+    local dest_type="$REPLY"
+
+    case "$dest_type" in
+        device) _select_dest_device     || return ;;
+        path)   _select_local_dest      || return ;;
+        sftp|nfs|iscsi|s3|nbd)
+            _select_network_dest        || return ;;
+    esac
+
+    # Ensure source is still read-only (may have been altered)
+    blockdev --setro "$source_dev" 2>/dev/null || true
+
+    # 4. Output format
+    _d --title "Image format" --menu "Select output format:" 12 $W 3 \
+        "ewf"  "EWF/E01 — EnCase Evidence File (industry standard)" \
+        "aff4" "AFF4 — Advanced Forensic Format 4 (modern, open)" \
+        "raw"  "Raw/DD — sector-by-sector copy (maximum compatibility)" \
+        || return
+    local fmt="$REPLY"
+
+    # 5. Confirm
+    local src_size
+    src_size=$(blockdev --getsize64 "$source_dev" 2>/dev/null | numfmt --to=iec || echo "?")
+    _yesno "Ready to image:\n\n  Source:  ${source_dev} (${src_size})\n  Dest:    ${_DEST_BASE}.${fmt/ewf/E01}\n  Format:  ${fmt}\n  Case:    ${casenr}\n\nALL existing data on the destination path will be preserved.\nProceed?" \
+        || return
+
+    # 6. Image with progress
+    {
+        afclone-engine image \
+            "$source_dev" "$_DEST_BASE" "$fmt" \
+            "$examiner" "$casenr" "$evidence" "$notes" 2>/dev/null
+    } | _gauge "Imaging ${source_dev} → ${fmt^^} ...  (do not interrupt)"
+
+    # Parse last line for result
+    local result_line
+    result_line=$(grep '^RESULT:' "${_DEST_BASE}_engine.log" 2>/dev/null || true)
+    # Re-run to capture result since gauge consumed it
+    # Capture properly by saving engine output to log first
+    _run_image_with_log "$source_dev" "$_DEST_BASE" "$fmt" "$examiner" "$casenr" "$evidence" "$notes"
+
+    # 7. Lock output device back
+    if [[ -n "$_MOUNTED_BY_US" ]]; then
+        sync
+        umount "$_MOUNTED_BY_US" 2>/dev/null && rmdir "$_MOUNTED_BY_US" 2>/dev/null || true
+    fi
+    [[ -n "$_OUTPUT_DEV" ]] && _lock_dev "$_OUTPUT_DEV"
+}
+
+# Run engine, save output to log, show gauge, then show result
+_run_image_with_log() {
+    local source_dev="$1" destbase="$2" fmt="$3" examiner="$4" casenr="$5" evidence="$6" notes="$7"
+    local logf="${destbase}_engine.log"
+
+    # Run engine saving output to log AND piping to gauge
+    afclone-engine image "$source_dev" "$destbase" "$fmt" \
+        "$examiner" "$casenr" "$evidence" "$notes" \
+        2>/dev/null | tee "$logf" | _gauge "Imaging ${source_dev} → ${fmt^^} ..."
+
+    local result_line
+    result_line=$(grep '^RESULT:' "$logf" | tail -1)
+    rm -f "$logf"
+
+    if [[ -n "$result_line" ]]; then
+        IFS=':' read -r _ verified img_path logfile src_sha img_sha <<< "$result_line"
+        if [[ "$verified" == "true" ]]; then
+            _msg "Imaging complete and VERIFIED.\n\nImage:  ${img_path}\nLog:    ${logfile}\n\nSource SHA-256: ${src_sha:0:32}...\nImage  SHA-256: ${img_sha:0:32}..."
+        else
+            _msg "Imaging complete but verification FAILED or not available.\n\nImage: ${img_path}\nLog:   ${logfile}\n\nManually verify with: afclone-engine verify <image>"
+        fi
+    else
+        _msg "Imaging finished. Check ${destbase}_case.json for details."
+    fi
+}
+
+# ── Verify existing image ──────────────────────────────────────────────────────
+
+verify_existing() {
+    _d --title "Select image file" --fselect "$SESSION_DIR/" $H $W || return
+    local img="$REPLY"
+    [[ -f "$img" ]] || { _msg "File not found: $img"; return; }
+
+    _info "Verifying ${img} ..." 1
+    local out
+    out=$(afclone-engine verify "$img" 2>&1)
+    local verdict
+    verdict=$(echo "$out" | grep '^VERIFY:' | cut -d: -f2)
+
+    case "$verdict" in
+        OK)           _msg "VERIFIED OK\n\n${out}" ;;
+        FAIL)         _msg "VERIFICATION FAILED\n\n${out}" ;;
+        NO_CHECKSUM)  _msg "Raw image — no embedded checksum.\n\nCompute hash manually:\n  sha256sum \"${img}\"" ;;
+        *)            _msg "$out" ;;
+    esac
+}
+
+# ── Device info screen ─────────────────────────────────────────────────────────
+
+show_devices() {
+    _build_device_menu
+    if [[ ${#_MENU_ITEMS[@]} -eq 0 ]]; then
+        _msg "No storage devices detected."
+        return
+    fi
+    _d --title "Device list" --menu "Select a device to inspect:" \
+        $H $W 12 "${_MENU_ITEMS[@]}" || return
+    local dev="$REPLY"
+    local info
+    info=$(afclone-engine device-info "$dev" 2>/dev/null)
+    _d --title "Device info: $dev" --scrollbox <(echo "$info") $H $W
+}
+
+# ── Main menu ──────────────────────────────────────────────────────────────────
+
+main() {
+    while true; do
+        _d --title "Main Menu  [Edition: ${EDITION^^}]" \
+            --menu "Select an option:" $H $W 5 \
+            "1" "New imaging session" \
+            "2" "Verify existing image" \
+            "3" "Device list & info" \
+            "4" "Shell  (Ctrl+D to return)" \
+            "5" "Reboot" \
+            || break
+
+        case "$REPLY" in
+            1) new_session     ;;
+            2) verify_existing ;;
+            3) show_devices    ;;
+            4) clear; echo "Type 'exit' or Ctrl+D to return to AFClone."; bash; clear ;;
+            5) _yesno "Reboot now?" && reboot ;;
+        esac
+    done
+    clear
+}
+
+main

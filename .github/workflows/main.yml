@@ -3,16 +3,34 @@ name: CI
 on: [push]
 
 jobs:
-  build:
+  build-nano:
     runs-on: self-hosted
-    name: Build AFClone ISO
+    name: Build Nano Edition
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Update Docker mkarchiso image
-        run: docker pull leitosama/mkarchiso:latest
-      - name: Build ISO image
-        run: docker run --privileged --rm -v "$(pwd)"/afclone:/profile -v "$(pwd)"/out:/out leitosama/mkarchiso:latest
-      - uses: actions/upload-artifact@v3
+      - name: Build Nano ISO
+        run: make nano
+      - name: Smoke test Nano ISO
+        run: make smoke-nano
+      - name: Upload Nano artifact
+        uses: actions/upload-artifact@v3
         with:
-          path: ./out/*
+          name: AFClone-Nano
+          path: out/nano/*.iso
+
+  build-standard:
+    runs-on: self-hosted
+    name: Build Standard Edition
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Build Standard ISO
+        run: make standard
+      - name: Smoke test Standard ISO
+        run: make smoke-standard
+      - name: Upload Standard artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: AFClone-Standard
+          path: out/standard/*.iso

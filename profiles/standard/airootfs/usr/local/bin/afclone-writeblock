@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Set all non-boot block devices to read-only on boot.
+# The TUI selectively lifts write-protect on the chosen output device only.
+
+BOOT_LABEL="${archisolabel:-AFCLONE_NANO}"
+
+# Find the device backing the live boot media
+BOOT_DEV=""
+for dev in $(lsblk -dpno NAME,LABEL 2>/dev/null | awk -v lbl="$BOOT_LABEL" '$2==lbl{print $1}'); do
+    BOOT_DEV="$dev"
+done
+
+for dev in $(lsblk -dpno NAME 2>/dev/null); do
+    [[ "$dev" == "$BOOT_DEV" ]] && continue
+    [[ "$dev" == /dev/loop* ]] && continue
+    blockdev --setro "$dev" 2>/dev/null || true
+    hdparm -r 1 "$dev" 2>/dev/null || true
+done

@@ -1,0 +1,13 @@
+[Match]
+Name=wwan*
+Name=ppp*
+
+[Network]
+DHCP=yes
+IPv6PrivacyExtensions=yes
+
+[DHCPv4]
+RouteMetric=1200
+
+[IPv6AcceptRA]
+RouteMetric=1200

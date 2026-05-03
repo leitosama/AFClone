@@ -1,0 +1,6 @@
+PermitRootLogin yes
+AuthorizedKeysFile .ssh/authorized_keys
+KbdInteractiveAuthentication no
+UsePAM yes
+PrintMotd no
+Subsystem sftp /usr/lib/ssh/sftp-server

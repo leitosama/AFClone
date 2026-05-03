@@ -1,0 +1,6 @@
+HOTLIST
+GROUP "AFClone Network Destinations"
+  ENTRY "SFTP server" URL "sh://user@hostname/remote/path"
+  ENTRY "NFS share" URL "sh://hostname/nfs/export"
+  ENTRY "S3 mount" URL "/mnt/afclone-s3"
+ENDGROUP

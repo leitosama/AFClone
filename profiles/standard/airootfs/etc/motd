@@ -1,0 +1,15 @@
+
+  ___    _____ ____ _                     ____  _                  _               _
+ / _ \  |  ___/ ___| | ___  _ __   ___  / ___|| |_ __ _ _ __   __| | __ _ _ __ __| |
+| | | | | |_ | |   | |/ _ \| '_ \ / _ \ \___ \| __/ _` | '_ \ / _` |/ _` | '__/ _` |
+| |_| | |  _|| |___| | (_) | | | |  __/  ___) | || (_| | | | | (_| | (_| | | | (_| |
+ \___/  |_|   \____|_|\___/|_| |_|\___| |____/ \__\__,_|_| |_|\__,_|\__,_|_|  \__,_|
+
+   Forensic Disk Imager  |  Standard Edition  |  Write-Protected by default
+
+ TTY1: AFClone TUI         TTY2-6: Shell (bash)
+ SSH:  ssh root@<IP>       SFTP / NFS / iSCSI / S3 / NBD supported
+
+ ALL storage devices are READ-ONLY until you designate an output device.
+ Wireless: iwctl    Mobile: mmcli    Wired: auto-DHCP
+

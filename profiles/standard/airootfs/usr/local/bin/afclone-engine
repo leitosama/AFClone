@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+# AFClone imaging engine — called by the TUI.
+# Usage: afclone-engine <command> [args...]
+
+set -euo pipefail
+
+cmd="${1:-help}"
+shift || true
+
+# ── Device enumeration ─────────────────────────────────────────────────────────
+
+_size_human() {
+    local bytes="$1"
+    numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "${bytes}B"
+}
+
+_nvme_field() {
+    nvme id-ctrl "$1" 2>/dev/null | awk -F: "/^${2}/{gsub(/^ +| +\$/,\"\",\$2);print \$2}" | head -1
+}
+
+# Prints device entries suitable for dialog --menu: <path> <label> ...
+list_devices() {
+    # NVMe
+    for d in /dev/nvme[0-9]n[1-9] /dev/nvme[0-9][0-9]n[1-9]; do
+        [[ -b "$d" ]] || continue
+        local model serial size_h
+        model=$(_nvme_field "$d" "mn" || echo "NVMe")
+        serial=$(_nvme_field "$d" "sn" || echo "")
+        size_h=$(_size_human "$(blockdev --getsize64 "$d" 2>/dev/null || echo 0)")
+        echo "$d"
+        echo "NVMe | ${size_h} | ${model} | SN:${serial}"
+    done
+
+    # SATA / SAS / UFS (sd*)
+    for d in /dev/sd[a-z] /dev/sd[a-z][a-z]; do
+        [[ -b "$d" ]] || continue
+        local transport model serial size_h type_lbl
+        transport=$(lsscsi -t 2>/dev/null | awk -v d="${d##/dev/}" '$0~d{print $2}' | head -1)
+        type_lbl=$(echo "${transport:-sata}" | grep -qi "ufs" && echo "UFS" || echo "SATA/SAS")
+        model=$(hdparm -I "$d" 2>/dev/null | awk -F: '/Model Number/{gsub(/^ +| +$/,"",$2);print $2}' | head -1 || echo "")
+        serial=$(hdparm -I "$d" 2>/dev/null | awk -F: '/Serial Number/{gsub(/^ +| +$/,"",$2);print $2}' | head -1 || echo "")
+        size_h=$(_size_human "$(blockdev --getsize64 "$d" 2>/dev/null || echo 0)")
+        echo "$d"
+        echo "${type_lbl} | ${size_h} | ${model} | SN:${serial}"
+    done
+
+    # eMMC (mmcblk* where sysfs type == MMC)
+    for d in /dev/mmcblk[0-9]; do
+        [[ -b "$d" ]] || continue
+        local blkname="${d##/dev/}"
+        local devtype
+        devtype=$(cat "/sys/block/${blkname}/device/type" 2>/dev/null || echo "")
+        [[ "$devtype" == "MMC" ]] || continue
+        local model size_h
+        model=$(cat "/sys/block/${blkname}/device/name" 2>/dev/null | tr -d '[:space:]' || echo "eMMC")
+        size_h=$(_size_human "$(blockdev --getsize64 "$d" 2>/dev/null || echo 0)")
+        echo "$d"
+        echo "eMMC | ${size_h} | ${model}"
+    done
+
+    # NAND Flash (mtd* char devices)
+    for d in /dev/mtd[0-9] /dev/mtd[0-9][0-9]; do
+        [[ -c "$d" ]] || continue
+        local num="${d##/dev/mtd}"
+        local name size_h
+        name=$(cat "/sys/class/mtd/mtd${num}/name" 2>/dev/null | tr -d '[:space:]' || echo "NAND")
+        size_h=$(_size_human "$(cat "/sys/class/mtd/mtd${num}/size" 2>/dev/null || echo 0)")
+        echo "$d"
+        echo "NAND Flash | ${size_h} | ${name}"
+    done
+
+    # Software RAID (md*)
+    for d in /dev/md[0-9] /dev/md[0-9][0-9]; do
+        [[ -b "$d" ]] || continue
+        local blkname="${d##/dev/}"
+        local level size_h
+        level=$(cat "/sys/block/${blkname}/md/level" 2>/dev/null || echo "md")
+        size_h=$(_size_human "$(blockdev --getsize64 "$d" 2>/dev/null || echo 0)")
+        echo "$d"
+        echo "RAID (${level}) | ${size_h}"
+    done
+
+    # Hardware RAID via dmraid
+    for d in $(dmraid -sa 2>/dev/null | grep -o '/dev/mapper/[^ ]*' || true); do
+        [[ -b "$d" ]] || continue
+        local size_h
+        size_h=$(_size_human "$(blockdev --getsize64 "$d" 2>/dev/null || echo 0)")
+        echo "$d"
+        echo "HW-RAID | ${size_h}"
+    done
+}
+
+# Print human-readable info about a single device
+device_info() {
+    local dev="$1"
+    echo "Device: $dev"
+    echo "---"
+    if [[ "$dev" == /dev/nvme* ]]; then
+        nvme id-ctrl "$dev" 2>/dev/null | grep -E "^mn|^sn|^fr" || true
+        echo ""
+        nvme smart-log "$dev" 2>/dev/null | grep -E "temperature|power_on|unsafe_shutdowns|media_errors" || true
+    elif [[ "$dev" == /dev/sd* ]]; then
+        hdparm -I "$dev" 2>/dev/null | grep -E "Model|Serial|Firmware|Capacity|Rotation" | sed 's/^[[:space:]]*//' || true
+        echo ""
+        smartctl -H -A "$dev" 2>/dev/null | grep -E "SMART overall|Reallocated|Pending|Uncorrectable|Temperature" || true
+    elif [[ "$dev" == /dev/mmcblk* ]]; then
+        local blkname="${dev##/dev/}"
+        cat "/sys/block/${blkname}/device/name" "/sys/block/${blkname}/device/serial" 2>/dev/null | sed 's/^/  /' || true
+    elif [[ "$dev" == /dev/mtd* ]]; then
+        mtdinfo "$dev" 2>/dev/null || true
+    elif [[ "$dev" == /dev/md* ]]; then
+        mdadm --detail "$dev" 2>/dev/null || true
+    fi
+    echo ""
+    local size
+    size=$(blockdev --getsize64 "$dev" 2>/dev/null || echo 0)
+    echo "Size: $(_size_human "$size") (${size} bytes)"
+}
+
+# ── Imaging ────────────────────────────────────────────────────────────────────
+
+# Hash a block device or file, output "<sha256> <md5>"
+hash_source() {
+    local src="$1"
+    local size="$2"
+    local sha256 md5
+    sha256=$(pv -s "$size" "$src" 2>/dev/null | tee >(md5sum | awk '{print $1}' > /tmp/afclone_md5) | sha256sum | awk '{print $1}')
+    md5=$(cat /tmp/afclone_md5)
+    rm -f /tmp/afclone_md5
+    echo "${sha256} ${md5}"
+}
+
+# Hash a regular file (image), output "<sha256> <md5>"
+hash_file() {
+    local f="$1"
+    local sha256 md5
+    sha256=$(sha256sum "$f" | awk '{print $1}')
+    md5=$(md5sum "$f" | awk '{print $1}')
+    echo "${sha256} ${md5}"
+}
+
+# image <source> <destbase> <format> <examiner> <case> <evidence> <notes>
+# Outputs progress percentage lines to stdout for dialog --gauge, then a JSON
+# result block prefixed with "RESULT:" on the last line.
+do_image() {
+    local source="$1" destbase="$2" format="$3"
+    local examiner="$4" casenr="$5" evidence="$6" notes="$7"
+
+    local size
+    size=$(blockdev --getsize64 "$source" 2>/dev/null || wc -c < "$source")
+
+    local model="" serial=""
+    if [[ "$source" == /dev/nvme* ]]; then
+        model=$(_nvme_field "$source" "mn" || echo "")
+        serial=$(_nvme_field "$source" "sn" || echo "")
+    elif [[ "$source" == /dev/sd* ]]; then
+        model=$(hdparm -I "$source" 2>/dev/null | awk -F: '/Model Number/{gsub(/^ +| +$/,"",$2);print $2}' | head -1 || echo "")
+        serial=$(hdparm -I "$source" 2>/dev/null | awk -F: '/Serial Number/{gsub(/^ +| +$/,"",$2);print $2}' | head -1 || echo "")
+    fi
+
+    local start_time
+    start_time=$(date -Iseconds)
+
+    # ── Step 1: hash source ──────────────────────────────────────────────────
+    echo "2"  # progress: 2%
+    local src_hashes
+    src_hashes=$(hash_source "$source" "$size")
+    local src_sha256="${src_hashes%% *}"
+    local src_md5="${src_hashes##* }"
+
+    # ── Step 2: image ─────────────────────────────────────────────────────────
+    echo "10"
+    local img_path="" verified="false"
+
+    local _progpipe
+    _progpipe=$(mktemp -u /tmp/afclone-prog-XXXXXX)
+    mkfifo "$_progpipe"
+
+    case "$format" in
+        ewf)
+            img_path="${destbase}.E01"
+            (
+                # Pipe source through pv → ewfacquire reading stdin
+                pv -n -s "$size" "$source" 2>"$_progpipe" \
+                    | ewfacquire \
+                        -t "$destbase" \
+                        -C "$casenr" \
+                        -D "$notes" \
+                        -e "$examiner" \
+                        -E "$evidence" \
+                        -c deflate \
+                        -S 0 \
+                        - >/dev/null 2>&1
+            ) &
+            local img_pid=$!
+            cat "$_progpipe"   # feed percentages to caller (dialog --gauge)
+            wait "$img_pid" && true
+            ;;
+        aff4)
+            img_path="${destbase}.aff4"
+            (
+                pv -n -s "$size" "$source" 2>"$_progpipe" \
+                    | aff4imager -i - -o "$img_path" >/dev/null 2>&1
+            ) &
+            local img_pid=$!
+            cat "$_progpipe"
+            wait "$img_pid" && true
+            ;;
+        raw)
+            img_path="${destbase}.dd"
+            (
+                pv -n -s "$size" "$source" 2>"$_progpipe" > "$img_path"
+            ) &
+            local img_pid=$!
+            cat "$_progpipe"
+            wait "$img_pid" && true
+            ;;
+    esac
+    rm -f "$_progpipe"
+
+    # ── Step 3: verify ────────────────────────────────────────────────────────
+    echo "95"
+    local img_sha256="" img_md5=""
+    case "$format" in
+        ewf)
+            ewfverify "$img_path" >/dev/null 2>&1 && verified="true"
+            # Extract hash ewfacquire embedded
+            img_sha256=$(ewfinfo "$img_path" 2>/dev/null | awk -F: '/SHA-256/{gsub(/ /,"",$2);print $2}' | head -1 || true)
+            img_md5=$(ewfinfo "$img_path" 2>/dev/null | awk -F: '/MD5/{gsub(/ /,"",$2);print $2}' | head -1 || true)
+            ;;
+        aff4)
+            aff4imager --verify "$img_path" >/dev/null 2>&1 && verified="true"
+            local img_hashes
+            img_hashes=$(hash_file "$img_path")
+            img_sha256="${img_hashes%% *}"
+            img_md5="${img_hashes##* }"
+            ;;
+        raw)
+            local img_hashes
+            img_hashes=$(hash_file "$img_path")
+            img_sha256="${img_hashes%% *}"
+            img_md5="${img_hashes##* }"
+            [[ "$src_sha256" == "$img_sha256" ]] && verified="true"
+            ;;
+    esac
+
+    local end_time
+    end_time=$(date -Iseconds)
+
+    # ── Step 4: write case log ────────────────────────────────────────────────
+    local logfile="${destbase}_case.json"
+    cat > "$logfile" <<JSON
+{
+  "examiner": "${examiner//\"/\'}",
+  "case_number": "${casenr//\"/\'}",
+  "evidence_number": "${evidence//\"/\'}",
+  "notes": "${notes//\"/\'}",
+  "acquisition_start": "${start_time}",
+  "acquisition_end": "${end_time}",
+  "source_device": "${source}",
+  "source_size_bytes": ${size},
+  "source_model": "${model//\"/\'}",
+  "source_serial": "${serial//\"/\'}",
+  "image_format": "${format}",
+  "image_path": "${img_path}",
+  "hash_sha256_source": "${src_sha256}",
+  "hash_sha256_image": "${img_sha256}",
+  "hash_md5_source": "${src_md5}",
+  "hash_md5_image": "${img_md5}",
+  "verified": ${verified}
+}
+JSON
+
+    echo "100"
+    echo "RESULT:${verified}:${img_path}:${logfile}:${src_sha256}:${img_sha256}"
+}
+
+# Verify an existing image file
+verify_image() {
+    local img="$1"
+    local ext="${img##*.}"
+    local result="FAIL"
+
+    case "${ext,,}" in
+        e01)
+            ewfverify "$img" 2>&1 && result="OK"
+            ewfinfo "$img" 2>/dev/null
+            ;;
+        aff4)
+            aff4imager --verify "$img" 2>&1 && result="OK"
+            ;;
+        dd|raw|img)
+            echo "Raw image — no embedded checksum. Provide hash manually."
+            result="NO_CHECKSUM"
+            ;;
+        *)
+            echo "Unknown image format: $ext"
+            ;;
+    esac
+    echo "VERIFY:${result}"
+}
+
+# ── Dispatch ───────────────────────────────────────────────────────────────────
+case "$cmd" in
+    list-devices)  list_devices ;;
+    device-info)   device_info "$1" ;;
+    image)         do_image "$@" ;;
+    verify)        verify_image "$1" ;;
+    hash)          hash_source "$1" "$(blockdev --getsize64 "$1" 2>/dev/null || wc -c < "$1")" ;;
+    *)
+        echo "Commands: list-devices | device-info <dev> | image <src> <dest> <fmt> <examiner> <case> <evid> <notes>"
+        echo "          verify <image> | hash <dev>"
+        ;;
+esac

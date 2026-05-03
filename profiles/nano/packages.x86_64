@@ -1,0 +1,76 @@
+# Base system
+base
+linux
+linux-firmware
+linux-firmware-marvell
+mkinitcpio
+mkinitcpio-archiso
+
+# Microcode
+amd-ucode
+intel-ucode
+
+# Boot
+efibootmgr
+memtest86+
+memtest86+-efi
+syslinux
+
+# Shell and UI
+bash
+dialog
+less
+pv
+terminus-font
+
+# Storage detection and management
+dmidecode
+dmraid
+gdisk
+hdparm
+lsscsi
+lvm2
+mdadm
+nvme-cli
+smartmontools
+cryptsetup
+
+# eMMC support
+mmc-utils
+
+# NAND Flash support
+mtd-utils
+
+# Filesystem support (read-only access to evidence)
+dosfstools
+e2fsprogs
+exfatprogs
+ntfs-3g
+udftools
+fuse2
+
+# Forensic imaging
+ddrescue
+libewf
+partclone
+testdisk
+
+# Hashing and verification (via coreutils)
+diffutils
+
+# Editors and file management
+mc
+vim
+
+# Network (SSH access to imager only)
+dhcpcd
+openssh
+
+# Virtualization guest support
+hyperv
+open-vm-tools
+qemu-guest-agent
+virtualbox-guest-utils-nox
+
+# Partitioning
+parted

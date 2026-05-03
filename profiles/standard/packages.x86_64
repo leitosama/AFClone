@@ -1,0 +1,103 @@
+# ── Everything from Nano ──────────────────────────────────────────────────────
+# Base system
+base
+linux
+linux-firmware
+linux-firmware-marvell
+mkinitcpio
+mkinitcpio-archiso
+
+# Microcode
+amd-ucode
+intel-ucode
+
+# Boot
+efibootmgr
+memtest86+
+memtest86+-efi
+syslinux
+
+# Shell and UI
+bash
+dialog
+less
+pv
+terminus-font
+
+# Storage detection and management
+dmidecode
+dmraid
+gdisk
+hdparm
+lsscsi
+lvm2
+mdadm
+nvme-cli
+smartmontools
+cryptsetup
+
+# eMMC support
+mmc-utils
+
+# NAND Flash support
+mtd-utils
+
+# Filesystem support
+dosfstools
+e2fsprogs
+exfatprogs
+ntfs-3g
+udftools
+fuse2
+
+# Forensic imaging
+ddrescue
+libewf
+partclone
+testdisk
+
+# Hashing
+diffutils
+
+# Editors and file management
+mc
+vim
+
+# Virtualization guest support
+hyperv
+open-vm-tools
+qemu-guest-agent
+virtualbox-guest-utils-nox
+
+# Partitioning
+parted
+
+# ── Standard-edition extras ───────────────────────────────────────────────────
+# Network file transfer
+curl
+lftp
+nbd
+nfs-utils
+rsync
+s3fs
+sshfs
+gnu-netcat
+open-iscsi
+openssh
+
+# Wired network
+dhcpcd
+ethtool
+
+# Wireless
+b43-fwcutter
+broadcom-wl
+iw
+iwd
+wireless-regdb
+wireless_tools
+wpa_supplicant
+
+# Mobile broadband
+modemmanager
+wvdial
