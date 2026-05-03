@@ -26,14 +26,17 @@ all: nano standard
 pull:
 	docker pull $(MKARCHISO_IMAGE)
 
-# ── AFF4 package (optional) ───────────────────────────────────────────────────
-# Builds aff4l and creates a local pacman repo so mkarchiso can install it.
-# After this runs, nano/standard builds will automatically pick it up.
-aff4-pkg: $(LOCAL_REPO)/afclone-local.db.tar.gz
-
+# ── Local repo bootstrap ──────────────────────────────────────────────────────
+# Create an empty-but-valid pacman db so [afclone-local] in pacman.conf never
+# fails, even before `make aff4-pkg` has been run.
 $(LOCAL_REPO)/afclone-local.db.tar.gz:
-	@echo "==> Building AFF4 package..."
 	@mkdir -p $(LOCAL_REPO)
+	@tar czf $@ --files-from /dev/null
+	@ln -sf afclone-local.db.tar.gz $(LOCAL_REPO)/afclone-local.db
+
+# ── AFF4 package (optional) ───────────────────────────────────────────────────
+aff4-pkg: $(LOCAL_REPO)/afclone-local.db.tar.gz
+	@echo "==> Building AFF4 package..."
 	docker run --rm \
 		-v "$(CURDIR)/$(LOCAL_REPO)":/repo \
 		-w /tmp \
@@ -51,38 +54,25 @@ $(LOCAL_REPO)/afclone-local.db.tar.gz:
 		"
 	@echo "==> AFF4 package ready in $(LOCAL_REPO)/"
 
-# ── Helper: build docker args with optional local repo ────────────────────────
-# If profiles/local-repo/afclone-local.db.tar.gz exists, inject the repo into
-# the profile's pacman.conf via a temporary overlay file for this build only.
-define build_iso
-	@echo "==> Building AFClone $(1)..."
-	@mkdir -p $(OUT_DIR)/$(2)
-	@if [ -f "$(LOCAL_REPO)/afclone-local.db.tar.gz" ]; then \
-		echo "    (including local AFF4 repo)"; \
-		extra_vol="-v $(CURDIR)/$(LOCAL_REPO):/profile/local-repo"; \
-		extra_repo="[afclone-local]\nSigLevel = Optional TrustAll\nServer = file:///profile/local-repo\n\n"; \
-		tmp_conf=$$(mktemp); \
-		printf "$$extra_repo" | cat - $(PROFILES_DIR)/$(2)/pacman.conf > $$tmp_conf; \
-	else \
-		extra_vol=""; \
-		tmp_conf=$(PROFILES_DIR)/$(2)/pacman.conf; \
-	fi; \
-	docker run --privileged --rm \
-		-v "$(CURDIR)/$(PROFILES_DIR)/$(2)":/profile \
-		$$([ -n "$$extra_vol" ] && echo "$$extra_vol") \
-		$$([ -n "$$extra_vol" ] && echo "-v $$tmp_conf:/profile/pacman.conf") \
-		-v "$(CURDIR)/$(OUT_DIR)/$(2)":/out \
-		$(MKARCHISO_IMAGE); \
-	[ -z "$$extra_vol" ] || rm -f "$$tmp_conf"
-endef
-
 # ── ISO builds ────────────────────────────────────────────────────────────────
-nano: pull
-	$(call build_iso,Nano,nano)
+nano: pull $(LOCAL_REPO)/afclone-local.db.tar.gz
+	@echo "==> Building AFClone Nano..."
+	@mkdir -p $(OUT_DIR)/nano
+	docker run --privileged --rm \
+		-v "$(CURDIR)/$(PROFILES_DIR)/nano":/profile \
+		-v "$(CURDIR)/$(LOCAL_REPO)":/profile/local-repo \
+		-v "$(CURDIR)/$(OUT_DIR)/nano":/out \
+		$(MKARCHISO_IMAGE)
 	@echo "==> Nano ISO ready: $(OUT_DIR)/nano/"
 
-standard: pull
-	$(call build_iso,Standard,standard)
+standard: pull $(LOCAL_REPO)/afclone-local.db.tar.gz
+	@echo "==> Building AFClone Standard..."
+	@mkdir -p $(OUT_DIR)/standard
+	docker run --privileged --rm \
+		-v "$(CURDIR)/$(PROFILES_DIR)/standard":/profile \
+		-v "$(CURDIR)/$(LOCAL_REPO)":/profile/local-repo \
+		-v "$(CURDIR)/$(OUT_DIR)/standard":/out \
+		$(MKARCHISO_IMAGE)
 	@echo "==> Standard ISO ready: $(OUT_DIR)/standard/"
 
 # ── Smoke tests (no KVM required) ─────────────────────────────────────────────

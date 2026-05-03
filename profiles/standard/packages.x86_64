@@ -81,7 +81,7 @@ nfs-utils
 rsync
 s3fs
 sshfs
-gnu-netcat
+openbsd-netcat
 open-iscsi
 openssh
 
